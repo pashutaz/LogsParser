@@ -1,46 +1,122 @@
 <?php
-if ($filePath = $argv[1]??false){
-    if (file_exists($filePath)) {
-        $text = file_get_contents($filePath);
-        $patterns = [
-            'urls' => '/\"(POST|GET) \/.+ HTTP\/[\d\.]+"/',
-            'codes' => '/\" (\d{3}) /',
-            'traffic' => '/[^\s]\w+ (\d+) \"/',
-            'crowlers' => '/(Google|Baidu|Bing|Yandex)/'
-        ];
 
-        $outputData = [
-            'views' => 0,
-            'urls' => 0,
-            'traffic' => 0,
-            'crawlers' => [
-                'Google' => 0,
-                'Bing' => 0,
-                'Baidu' => 0,
-                'Yandex' => 0,
-            ],
-            'statusCodes' => 0,
-        ];
+class Parser
+{
+    private $filePath;
 
-        preg_match_all($patterns['urls'], $text, $matches);
-        $outputData['views'] = count($matches[0]);
-        $outputData['urls'] = count(array_count_values($matches[0]));
+    // Regex patterns shortcuts
+    private $patterns = [
+        'request' => '/\"(POST|GET|HEAD|DELETE|PATCH|PUT|OPTIONS) (\/[^\"]*) HTTP\/\d\.\d\"/',//http request
+        'url' => '/\"(https?:\/\/[^\"#]+)(#[^\"]*)?\"/', //part of url without request
+        'code' => '/\" (\d{3}) /',//status codes
+        'traffic' => '/[^\s]\w+ (\d+) \"/',//bytes of traffic
+        'crawler' => '/(Googlebot|Baiduspider|bingbot|YandexBot)/',
+    ];
 
-        preg_match_all($patterns['traffic'], $text, $matches);
-        $outputData['traffic'] = array_sum($matches[1]);
+    // Result data array
+    private $outputData = [
+        'views' => 0,
+        'urls' => [],
+        'traffic' => 0,
+        'crawlers' => [
+            'Google' => 0,
+            'Bing' => 0,
+            'Baidu' => 0,
+            'Yandex' => 0,
+        ],
+        'statusCodes' => []
+    ];
 
-        preg_match_all($patterns['crowlers'], $text, $matches);
-        $outputData['crawlers']['Google'] = array_count_values($matches[1])['Google']??0;
-        $outputData['crawlers']['Bing'] = array_count_values($matches[1])['Bing']??0;
-        $outputData['crawlers']['Baidu'] = array_count_values($matches[1])['Baidu']??0;
-        $outputData['crawlers']['Yandex'] = array_count_values($matches[1])['Yandex']??0;
 
-        preg_match_all($patterns['codes'], $text, $matches);
-        $outputData['statusCodes'] = array_count_values($matches[1]);
-        
+    function __construct($filePath = null)
+    {
+        global $argv;
+        $this->filePath = $filePath ?? ($argv[1] ?? false);
+
+        if ($this->filePath ?? false){
+
+            if (file_exists($this->filePath)) {
+
+                $this->parse();
+
+            }else exit ("There is no such file\n");
+
+        }else exit ("Please specify path to logs file\n");
+    }
+
+    // main parser logic
+    private function parse(){
+
+        // opening filestream for reading
+        if ($file = fopen($this->filePath, 'r')) {
+
+            // line by line data checking
+            while (!feof($file)) {
+                $line = fgets($file);
+
+                // counting all views
+                $this->outputData['views']++;
+
+                // unique urls handeling
+                preg_match($this->patterns['request'], $line, $matches);
+                $url = '';
+                if ($matches){
+                    $url = $matches[2];
+                }
+                preg_match($this->patterns['url'], $line, $matches);
+                if ($matches){
+                    $url = $matches[1] . $url;
+                    in_array($url, $this->outputData['urls']) ? true : $this->outputData['urls'][] = $url;
+                }
+
+                // evaluating data trafic
+                preg_match($this->patterns['traffic'], $line, $matches);
+                if ($matches) {
+                    $this->outputData['traffic'] += $matches[1];
+                }
+
+                // Searchers crawler bots handeling
+                preg_match($this->patterns['crawler'], $line, $matches);
+                if ($matches) {
+                    switch ($matches[1]) {
+                        case 'Googlebot':
+                            $this->outputData['crawlers']['Google']++;
+                            break;
+                        case 'bingbot':
+                            $this->outputData['crawlers']['Bing']++;
+                            break;
+                        case 'Baiduspider':
+                            $this->outputData['crawlers']['Baidu']++;
+                            break;
+                        case 'YandexBot':
+                            $this->outputData['crawlers']['Yandex']++;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+
+                // counting status codes of request
+                preg_match($this->patterns['code'], $line, $matches);
+                if ($matches){
+                    $this->outputData['statusCodes'][$matches[1]] ?? $this->outputData['statusCodes'][$matches[1]] = 0;
+                    $this->outputData['statusCodes'][$matches[1]]++;
+                }
+            }
+            fclose($file);
+
+            // couting unique urls
+            $this->outputData['urls'] = count($this->outputData['urls']);
+        }
+    }
+
+    // Json data output
+    public function getData(){
         header('Content-type: application/json');
-        echo $outputData = json_encode($outputData);
-    }else
-        echo "There is no such file\n";
-}else
-    echo "Please specify path to logs file\n";
+        return $this->outputData = json_encode($this->outputData);
+    }
+
+}
+
+$logs = new Parser();
+echo $logs->getData();
